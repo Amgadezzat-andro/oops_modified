@@ -2,6 +2,44 @@ use crate::app::App;
 use std::fs;
 use std::path::PathBuf;
 
+/// Rebuild the directory cache. Called once per navigation, not every frame.
+fn rebuild_dir_cache(app: &mut App) {
+    app.dir_cache.clear();
+    let dir = match &app.current_directory {
+        Some(d) => d.clone(),
+        None => {
+            app.dir_cache_key = None;
+            return;
+        }
+    };
+
+    if let Ok(read) = fs::read_dir(&dir) {
+        let mut entries: Vec<(PathBuf, bool)> = read
+            .filter_map(|e| {
+                let e = e.ok()?;
+                let name = e.file_name();
+                let name_str = name.to_str()?;
+                if name_str.starts_with('.') {
+                    return None;
+                }
+                // file_type() on Linux is free — readdir already returns d_type
+                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                Some((e.path(), is_dir))
+            })
+            .collect();
+
+        entries.sort_by(|(a, a_dir), (b, b_dir)| match (a_dir, b_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.file_name().cmp(&b.file_name()),
+        });
+
+        app.dir_cache = entries;
+    }
+
+    app.dir_cache_key = Some(dir);
+}
+
 pub fn show(ctx: &egui::Context, app: &mut App) {
     egui::SidePanel::left("explorer")
         .resizable(true)
@@ -14,6 +52,9 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
             ui.horizontal(|ui| {
                 ui.strong("EXPLORER");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("🔄").on_hover_text("Refresh").clicked() {
+                        app.invalidate_dir_cache();
+                    }
                     if ui
                         .small_button("⬆")
                         .on_hover_text("Go up one directory")
@@ -22,6 +63,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                         if let Some(dir) = app.current_directory.clone() {
                             if let Some(parent) = dir.parent() {
                                 app.current_directory = Some(parent.to_path_buf());
+                                app.invalidate_dir_cache();
                             }
                         }
                     }
@@ -32,6 +74,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                     {
                         if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                             app.current_directory = Some(dir);
+                            app.invalidate_dir_cache();
                         }
                     }
                 });
@@ -51,45 +94,28 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
 
             ui.separator();
 
+            // ── Rebuild cache only when directory changes ────────────────────
+            if app.current_directory != app.dir_cache_key {
+                rebuild_dir_cache(app);
+            }
+
             // ── File tree ───────────────────────────────────────────────────
+            if app.current_directory.is_none() {
+                return;
+            }
+
+            // Collect into a local snapshot to avoid borrow issues while mutating app
+            let entries: Vec<(PathBuf, bool)> = app.dir_cache.clone();
+
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-                    let dir = match app.current_directory.clone() {
-                        Some(d) => d,
-                        None => return,
-                    };
-
-                    let Ok(entries) = fs::read_dir(&dir) else {
-                        ui.label(egui::RichText::new("Cannot read directory").small().weak());
-                        return;
-                    };
-
-                    let mut entries: Vec<PathBuf> = entries
-                        .filter_map(|e| e.ok().map(|e| e.path()))
-                        .filter(|p| {
-                            // Skip hidden entries
-                            p.file_name()
-                                .and_then(|n| n.to_str())
-                                .map(|n| !n.starts_with('.'))
-                                .unwrap_or(false)
-                        })
-                        .collect();
-
-                    // Directories first, then alphabetical
-                    entries.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
-                        (true, false) => std::cmp::Ordering::Less,
-                        (false, true) => std::cmp::Ordering::Greater,
-                        _ => a.file_name().cmp(&b.file_name()),
-                    });
-
-                    for path in entries {
+                    for (path, is_dir) in entries {
                         let name = match path.file_name().and_then(|n| n.to_str()) {
                             Some(n) => n.to_owned(),
                             None => continue,
                         };
 
-                        let is_dir = path.is_dir();
                         let is_active = app.current_file.as_ref() == Some(&path);
 
                         let icon = if is_dir {
@@ -119,6 +145,7 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                         if response.clicked() {
                             if is_dir {
                                 app.current_directory = Some(path);
+                                app.invalidate_dir_cache();
                             } else {
                                 crate::file_ops::load_file(app, path);
                             }

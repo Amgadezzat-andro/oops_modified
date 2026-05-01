@@ -28,14 +28,15 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
 
                 ui.separator();
 
-                // Line / char counts
-                let lines = app.buffer.lines().count().max(1);
-                let chars = app.buffer.chars().count();
-                ui.label(egui::RichText::new(format!("Ln {}  Ch {}", lines, chars)).small());
+                // Use pre-computed stats — no per-frame scan of the buffer
+                ui.label(
+                    egui::RichText::new(format!("Ln {}  Ch {}", app.stat_lines, app.stat_chars))
+                        .small(),
+                );
 
                 ui.separator();
 
-                // Current file path (truncated, weak)
+                // Current file path (weak, small)
                 if let Some(path) = &app.current_file {
                     ui.label(
                         egui::RichText::new(path.to_string_lossy().as_ref())
@@ -44,9 +45,12 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                     );
                 }
 
-                // Transient status message — right-aligned, auto-dismiss after 3 s
+                // Transient status message — right-aligned, auto-dismiss after 3 s.
+                // Schedule a repaint only for the moment it should disappear so we
+                // don't spin at 60 fps just to check elapsed time.
                 let should_clear = if let Some((msg, ts)) = &app.status_message {
-                    if ts.elapsed() < Duration::from_secs(3) {
+                    let elapsed = ts.elapsed();
+                    if elapsed < Duration::from_secs(3) {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add_space(4.0);
                             ui.label(
@@ -55,6 +59,8 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
                                     .color(egui::Color32::from_rgb(150, 210, 255)),
                             );
                         });
+                        // Wake up exactly when the message should vanish
+                        ctx.request_repaint_after(Duration::from_secs(3) - elapsed);
                         false
                     } else {
                         true
@@ -69,3 +75,4 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
             });
         });
 }
+

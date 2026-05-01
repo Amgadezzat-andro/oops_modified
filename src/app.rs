@@ -24,6 +24,19 @@ pub struct App {
 
     // Transient status message with auto-dismiss
     pub status_message: Option<(String, Instant)>,
+
+    // Directory listing cache — rebuilt only when the directory changes
+    pub dir_cache: Vec<(PathBuf, bool)>,   // (full_path, is_dir)
+    pub dir_cache_key: Option<PathBuf>,     // None means stale
+
+    // Buffer statistics cache — recomputed only when buffer length changes
+    pub stat_lines: usize,
+    pub stat_chars: usize,
+    pub stat_words: usize,
+    stat_computed_len: usize,
+
+    // Deduplicate viewport title updates
+    last_title: String,
 }
 
 impl App {
@@ -48,7 +61,32 @@ impl App {
             font_size: 14.0,
 
             status_message: None,
+
+            dir_cache: Vec::new(),
+            dir_cache_key: None,
+
+            stat_lines: 1,
+            stat_chars: 0,
+            stat_words: 0,
+            stat_computed_len: usize::MAX, // force first compute
+
+            last_title: String::new(),
         }
+    }
+
+    /// Recompute buffer statistics only when the buffer has changed.
+    pub fn update_stats(&mut self) {
+        if self.buffer.len() != self.stat_computed_len {
+            self.stat_lines = self.buffer.lines().count().max(1);
+            self.stat_chars = self.buffer.chars().count();
+            self.stat_words = self.buffer.split_whitespace().count();
+            self.stat_computed_len = self.buffer.len();
+        }
+    }
+
+    /// Mark the directory cache stale so the left panel rebuilds it next frame.
+    pub fn invalidate_dir_cache(&mut self) {
+        self.dir_cache_key = None;
     }
 
     /// Window title: filename + unsaved dot indicator
@@ -92,8 +130,14 @@ impl eframe::App for App {
             crate::file_ops::save_as_dialog(self);
         }
 
-        // Dynamic window title
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.window_title()));
+        self.update_stats();
+
+        // Only push a title update when it actually changes
+        let title = self.window_title();
+        if title != self.last_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_title = title;
+        }
 
         crate::ui::render(ctx, frame, self);
     }

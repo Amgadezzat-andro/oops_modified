@@ -33,29 +33,24 @@ pub fn show(ctx: &egui::Context, app: &mut App) {
 
                 ui.separator();
 
-                let lines = app.buffer.lines().count().max(1);
-                let words = app.buffer.split_whitespace().count();
-                let chars = app.buffer.chars().count();
-                let bytes = app.buffer.len();
-
                 egui::Grid::new("file_stats")
                     .num_columns(2)
                     .spacing([8.0, 2.0])
                     .show(ui, |ui| {
                         ui.label(egui::RichText::new("Lines").weak());
-                        ui.label(lines.to_string());
+                        ui.label(app.stat_lines.to_string());
                         ui.end_row();
 
                         ui.label(egui::RichText::new("Words").weak());
-                        ui.label(words.to_string());
+                        ui.label(app.stat_words.to_string());
                         ui.end_row();
 
                         ui.label(egui::RichText::new("Chars").weak());
-                        ui.label(chars.to_string());
+                        ui.label(app.stat_chars.to_string());
                         ui.end_row();
 
                         ui.label(egui::RichText::new("Bytes").weak());
-                        ui.label(bytes.to_string());
+                        ui.label(app.buffer.len().to_string());
                         ui.end_row();
 
                         if let Ok(meta) = std::fs::metadata(path) {
